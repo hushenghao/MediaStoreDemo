@@ -7,7 +7,7 @@
 
 * `Android 6.0` 以前，应用要想保存图片到相册，只需要通过`File`对象打开IO流就可以保存；
 * `Android 6.0` 添加了运行时权限，需要先申请存储权限才可以保存图片；
-* `Android 10` 引入了分区存储，但不是强制的，可以通过`requestLegacyExternalStorage=true`关闭分区存储；
+* `Android 10` 引入了分区存储，但不是强制的，可以通过清单配置`android:requestLegacyExternalStorage="true"`关闭分区存储；
 * `Android 11` 强制开启分区存储，应用以 Android 11 为目标版本，系统会忽略 `requestLegacyExternalStorage`标记，访问共享存储空间都需要使用`MediaStore`进行访问。
 
 我们通过上面的时间线可以看出，Google对系统公共存储的访问的门槛逐渐升高，摒弃传统的Java File对象直接访问文件的方式，想将Android的共享空间访问方式统一成一套API。这是我们的主角`MediaStore`
@@ -24,7 +24,7 @@
 1. 先将图片记录插入媒体库，获得插入的Uri；
 2. 然后通过插入Uri打开输出流将文件写入；
 
-大致流程就是这样子，只是不同的版本有一些细微的差距；
+大致流程就是这样子，只是不同的系统版本有一些细微的差距；
 
 * Android 10 之前的版本需要申请存储权限，**Android 10及以后版本是不需要读写权限的**
 * Android 10 之前是通过File路径打开流的，所以需要判断文件是否已经存在，否者的话会将以存在的图片给覆盖
@@ -34,29 +34,31 @@
 
 ## 编码时间
 
-这里用保存Bitmap到图库为例，保存文件和权限申请的逻辑，这里就不贴代码了，详见[Demo](https://github.com/hushenghao/MediaStoreDemo.git)
+这里用保存Bitmap到图库为例，保存文件 和 权限申请的逻辑，这里就不贴代码了，详见 [Demo](https://github.com/hushenghao/MediaStoreDemo.git)
 
+检查清单文件，如果应用里没有其他需要存储权限的需求可以加上`android:maxSdkVersion="28"`，这样Android 10的设备的应用详情就看不到这个权限了。
+```xml
+<!--Android Q之后不需要存储权限，完全使用MediaStore API来实现-->
+<uses-permission
+    android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />
+<uses-permission
+    android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28" />
+```
+保存图片到相册。这里为了演示方便，生产环境记得在IO线程处理，ANR了可不怪我。
 ```kotlin
-// 为了演示方便，生产环境记得在IO线程处理
-// decode bitmap
-val bitmap = BitmapFactory.decodeStream(assets.open("wallhaven_rdyyjm.jpg"))
-// 保存bitmap到相册
-val uri = bitmap.saveToAlbum(context, fileName = "save_wallhaven_rdyyjm.jpg")
+private fun saveImageInternal() {
+    val uri = assets.open("wallhaven_rdyyjm.jpg").use {
+        it.saveToAlbum(this, fileName = "save_wallhaven_rdyyjm.jpg", null)
+    } ?: return
+
+    Toast.makeText(this, uri.toString(), Toast.LENGTH_SHORT).show()
+}
 ```
 
-是的很简单，详细实现是怎么弄的，接着往下看。
-
+是不是很简单，详细实现是怎么弄的，接着往下看。这是一个保存Bitmap的扩展方法
 ```kotlin
-const val MIME_PNG = "image/png"
-const val MIME_JPG = "image/jpg"
-// 保存位置，这里使用Picures，也可以改为 DCIM
-private val ALBUM_DIR = Environment.DIRECTORY_PICTURES
-
-/**
- * 用于Q以下系统获取图片文件大小来更新[MediaStore.Images.Media.SIZE]
- */
-private class OutputFileTaker(var file: File? = null)
-
 /**
  * 保存Bitmap到相册的Pictures文件夹
  *
@@ -91,38 +93,19 @@ fun Bitmap.saveToAlbum(
     }
     return imageUri
 }
+```
 
-private fun Uri.outputStream(resolver: ContentResolver): OutputStream? {
-    return try {
-        // 通过Uri打开输出流。同理也可以打开输入流，读取媒体库文件
-        resolver.openOutputStream(this)
-    } catch (e: FileNotFoundException) {
-        Log.e(TAG, "save: open stream error: $e")
-        null
-    }
-}
+插入图片到媒体库，需要注意Android 10以下需要图片查重，防止文件被覆盖的问题。
+```kotlin
+const val MIME_PNG = "image/png"
+const val MIME_JPG = "image/jpg"
+// 保存位置，这里使用Picures，也可以改为 DCIM
+private val ALBUM_DIR = Environment.DIRECTORY_PICTURES
 
-private fun Uri.finishPending(
-    context: Context,
-    resolver: ContentResolver,
-    outputFile: File?
-) {
-    val imageValues = ContentValues()
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-        if (outputFile != null) {
-            // Android 10 以下需要更新文件大小字段，否则部分设备的图库里照片大小显示为0
-            imageValues.put(MediaStore.Images.Media.SIZE, outputFile.length())
-        }
-        resolver.update(this, imageValues, null, null)
-        // 通知媒体库更新，部分设备不更新 图库看不到 ？？？
-        val intent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, this)
-        context.sendBroadcast(intent)
-    } else {
-        // Android Q添加了IS_PENDING状态，为0时其他应用才可见
-        imageValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(this, imageValues, null, null)
-    }
-}
+/**
+ * 用于Q以下系统获取图片文件大小来更新[MediaStore.Images.Media.SIZE]
+ */
+private class OutputFileTaker(var file: File? = null)
 
 /**
  * 插入图片到媒体库
@@ -226,14 +209,36 @@ private fun ContentResolver.queryMediaImage28(imagePath: String): Uri? {
     }
     return null
 }
-
-private const val TAG = "ImageExt"// Log tag
 ```
-**大家期盼已久的代码** [ImageExt.kt](https://github.com/hushenghao/MediaStoreDemo)
+改变标志位，通知媒体库我完事了，到这里整个图片保存就结束了。怎么样是不是很简单，赶紧去系统图库里看看图片是不是已经在了。
+```kotlin
+private fun Uri.finishPending(
+    context: Context,
+    resolver: ContentResolver,
+    outputFile: File?
+) {
+    val imageValues = ContentValues()
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        if (outputFile != null) {
+            // Android 10 以下需要更新文件大小字段，否则部分设备的图库里照片大小显示为0
+            imageValues.put(MediaStore.Images.Media.SIZE, outputFile.length())
+        }
+        resolver.update(this, imageValues, null, null)
+        // 通知媒体库更新，部分设备不更新 图库看不到 ？？？
+        val intent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, this)
+        context.sendBroadcast(intent)
+    } else {
+        // Android Q添加了IS_PENDING状态，为0时其他应用才可见
+        imageValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+        resolver.update(this, imageValues, null, null)
+    }
+}
+```
+虽然代码有点多，但是相信**大家期盼已久了** [ImageExt.kt](https://raw.githubusercontent.com/hushenghao/MediaStoreDemo/main/app/src/main/java/com/dede/mediastoredemo/ImageExt.kt)
 
 ## 图片分享
 
-有很多场景是保存图片之后，调用第三方分享进行图片分享，但是一些文章不管三七二十一说需要用`FileProvider`。实际上这是不准确的，大部分情况是需要，一些场景是不需要的。
+有很多场景是保存图片之后，调用第三方分享进行图片分享，但是一些文章不管三七二十一说需要用`FileProvider`。实际上这是不准确的，部分情况是需要，还有一些场景是不需要的。
 
 我们只需要记得 **FileProvider是给其他应用分享应用私有文件的** 就够了，只有在我们需要将应用沙盒内的文件共享出去的时候才需要配置FileProvider。例如：
 
@@ -242,12 +247,24 @@ private const val TAG = "ImageExt"// Log tag
 
 但是保存到系统图库并分享的场景明显就不符合这个场景，因为图库不是应用私有的空间。
 
+```
+private fun shareImageInternal() {
+    val uri = assets.open("wallhaven_rdyyjm.jpg").use {
+        it.saveToAlbum(this, fileName = "save_wallhaven_rdyyjm.jpg", null)
+    } ?: return
+    val intent = Intent(Intent.ACTION_SEND)
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .setType("image/*")
+    startActivity(Intent.createChooser(intent, null))
+}
+```
+
 所以在使用FileProvider要区分一下场景，是不是可以不需要，因为FileProvider是一种特殊的ContentProvider，每一个内容提供者在应用启动的时候都要初始化，所以也会拖慢应用的启动速度。
 
 ## 参考资料
-
+[Demo](https://github.com/hushenghao/MediaStoreDemo.git)
 [访问共享存储空间中的媒体文件](https://developer.android.google.cn/training/data-storage/shared/media)
-[MediaStore](https://developer.android.google.cn/reference/android/provider/MediaStore)
+[Android MediaStore](https://developer.android.google.cn/reference/android/provider/MediaStore)
 [OpenSDK支持FileProvider方式分享文件到微信](
 https://developers.weixin.qq.com/community/develop/doc/0004886026c1a8402d2a040ee5b401)
 

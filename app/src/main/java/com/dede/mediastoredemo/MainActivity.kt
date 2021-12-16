@@ -1,6 +1,7 @@
 package com.dede.mediastoredemo
 
 import android.Manifest
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
@@ -35,7 +36,7 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, uri.toString(), Toast.LENGTH_SHORT).show()
     }
 
-    fun saveImage(v: View) {
+    fun saveImage(view: View) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             saveImageInternal()
         } else {
@@ -45,6 +46,30 @@ class MainActivity : AppCompatActivity() {
             )
             launcherCompat.launch(permissions) {
                 saveImageInternal()
+            }
+        }
+    }
+
+    private fun shareImageInternal() {
+        val uri = assets.open("wallhaven_rdyyjm.jpg").use {
+            it.saveToAlbum(this, fileName = "save_wallhaven_rdyyjm.jpg", null)
+        } ?: return
+        val intent = Intent(Intent.ACTION_SEND)
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .setType("image/*")
+        startActivity(Intent.createChooser(intent, null))
+    }
+
+    fun shareImage(view: View) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            shareImageInternal()
+        } else {
+            val permissions = arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+            launcherCompat.launch(permissions) {
+                shareImageInternal()
             }
         }
     }
