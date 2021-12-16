@@ -247,7 +247,7 @@ private fun Uri.finishPending(
 
 但是保存到系统图库并分享的场景明显就不符合这个场景，因为图库不是应用私有的空间。
 
-```
+```kotlin
 private fun shareImageInternal() {
     val uri = assets.open("wallhaven_rdyyjm.jpg").use {
         it.saveToAlbum(this, fileName = "save_wallhaven_rdyyjm.jpg", null)
@@ -263,8 +263,11 @@ private fun shareImageInternal() {
 
 ## 参考资料
 [Demo](https://github.com/hushenghao/MediaStoreDemo.git)
+
 [访问共享存储空间中的媒体文件](https://developer.android.google.cn/training/data-storage/shared/media)
+
 [Android MediaStore](https://developer.android.google.cn/reference/android/provider/MediaStore)
+
 [OpenSDK支持FileProvider方式分享文件到微信](
 https://developers.weixin.qq.com/community/develop/doc/0004886026c1a8402d2a040ee5b401)
 
